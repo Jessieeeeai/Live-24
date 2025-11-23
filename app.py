@@ -5,7 +5,7 @@ import asyncio
 import random
 import json
 from logic_core import CryptoBrain
-from stream_engine import text_to_speech, start_stream, create_preview_video, get_audio_duration
+from stream_engine import text_to_speech, start_stream, create_preview_video, get_audio_duration, trim_audio_silence
 
 # --- 初始化环境 ---
 os.makedirs("assets", exist_ok=True)
@@ -27,11 +27,11 @@ def save_db(topics):
         json.dump(topics, f, ensure_ascii=False)
 
 # --- 🔥 优化的字幕生成算法 (核心修复点) ---
-def generate_srt(text, audio_duration, output_path, delay_offset=0.3):
+def generate_srt(text, audio_duration, output_path, start_offset=0.0):
     """
     将长文案切分为 SRT 字幕
     🔥 核心修复：基于实际音频时长，而非估算语速
-    🔥 新增：延迟补偿，解决字幕提前显示问题
+    🔥 新增：起始偏移，解决字幕语音不同步问题
     """
     # 预处理：移除换行，变成一长串
     full_text = text.replace("\n", " ").replace("  ", " ").strip()
@@ -46,14 +46,24 @@ def generate_srt(text, audio_duration, output_path, delay_offset=0.3):
     actual_speed = total_chars / audio_duration  # 真实的字/秒
     print(f"📊 字幕同步参数: 总字数={total_chars}, 音频时长={audio_duration:.2f}s, 实际语速={actual_speed:.2f}字/秒")
     
-    # 切分策略：每行最多 15 字，或遇到标点就断句
+    # 切分策略：智能断句，优先按标点，其次按长度
     segments = []
     current_seg = ""
     
-    for char in full_text:
+    for i, char in enumerate(full_text):
         current_seg += char
-        # 切分条件：长度满15，或遇到标点
-        if len(current_seg) >= 15 or char in ["，", "。", "！", "？", "；", ",", ".", "!", "?", ";", " "]:
+        # 强断句标点
+        if char in ["。", "！", "？", ";"]:
+            if current_seg.strip():
+                segments.append(current_seg.strip())
+            current_seg = ""
+        # 弱断句标点（但只在字数超过8时才断）
+        elif char in ["，", ","] and len(current_seg) >= 8:
+            if current_seg.strip():
+                segments.append(current_seg.strip())
+            current_seg = ""
+        # 长度限制：超过18字强制断句
+        elif len(current_seg) >= 18:
             if current_seg.strip():
                 segments.append(current_seg.strip())
             current_seg = ""
@@ -70,16 +80,21 @@ def generate_srt(text, audio_duration, output_path, delay_offset=0.3):
     
     # 写入 SRT 文件
     with open(output_path, "w", encoding="utf-8") as f:
-        start_time = delay_offset  # 🔥 添加初始延迟，让字幕稍微滞后
+        start_time = start_offset  # 🔥 起始偏移，补偿音频开头静音
         for i, seg in enumerate(segments):
             # 按字数占比分配时间
             seg_char_ratio = len(seg) / total_seg_chars
             duration = audio_duration * seg_char_ratio
             
-            # 🔥 确保最短显示时间不少于 2.0 秒（增加到2秒，更稳定）
+            # 🔥 动态调整最短显示时间：短句1.5秒，长句2.5秒
+            min_duration = 1.5 if len(seg) <= 10 else 2.0
+            
             # 但不能超过实际剩余时间
-            remaining_time = audio_duration - start_time + delay_offset
-            duration = max(2.0, min(duration, remaining_time / (len(segments) - i)))
+            remaining_time = audio_duration - (start_time - start_offset)
+            if remaining_time > 0:
+                duration = max(min_duration, min(duration, remaining_time / (len(segments) - i)))
+            else:
+                duration = min_duration
             
             end_time = start_time + duration
             
@@ -92,7 +107,7 @@ def generate_srt(text, audio_duration, output_path, delay_offset=0.3):
             f.write(f"{i+1}\n{fmt(start_time)} --> {fmt(end_time)}\n{seg}\n\n")
             start_time = end_time
     
-    print(f"✅ 字幕生成完成: {len(segments)} 行，总时长 {audio_duration:.2f}s，延迟补偿 {delay_offset}s")
+    print(f"✅ 字幕生成完成: {len(segments)} 行，总时长 {audio_duration:.2f}s，起始偏移 {start_offset:.2f}s")
     return True
 
 # --- UI 界面构建 ---
@@ -255,21 +270,29 @@ with tab1:
                         audio_path = f"temp/s_{ts}.mp3"
                         srt_path = f"temp/s_{ts}.srt"
                         
-                        # 生成语音（使用用户选择的音色）
-                        asyncio.run(text_to_speech(script, audio_path, voice=selected_voice))
+                        # 生成语音（使用SSML优化）
+                        asyncio.run(text_to_speech(script, audio_path, use_ssml=True))
                         
-                        # 🔥 获取音频真实时长
-                        audio_duration = get_audio_duration(audio_path)
-                        if audio_duration is None:
-                            # 备用方案：按 3.2 字/秒估算
-                            audio_duration = len(script) / 3.2
-                            st.warning(f"⚠️ 使用估算时长: {audio_duration:.2f}s")
+                        # 🔥 去除音频开头和结尾的静音
+                        st.write("✂️ 优化音频（去除静音）...")
+                        audio_path = trim_audio_silence(audio_path, audio_path.replace('.mp3', '_clean.mp3'))
+                        
+                        # 🔥 获取音频真实时长和静音偏移
+                        result = get_audio_duration(audio_path)
+                        if result and len(result) == 2:
+                            audio_duration, start_silence = result
                         else:
-                            st.info(f"⏱️ 音频时长: {audio_duration:.2f} 秒 ({int(audio_duration//60)}分{int(audio_duration%60)}秒)")
+                            audio_duration = result if result else len(script) / 3.2
+                            start_silence = 0.0
                         
-                        # 🔥 基于真实时长生成字幕
-                        st.write("🔥 生成同步字幕...")
-                        srt_success = generate_srt(script, audio_duration, srt_path)
+                        if audio_duration:
+                            st.info(f"⏱️ 音频时长: {audio_duration:.2f} 秒 ({int(audio_duration//60)}分{int(audio_duration%60)}秒) | 起始偏移: {start_silence:.2f}s")
+                        else:
+                            st.warning(f"⚠️ 使用估算时长: {audio_duration:.2f}s")
+                        
+                        # 🔥 基于真实时长和偏移生成字幕
+                        st.write("🔥 生成精确同步字幕...")
+                        srt_success = generate_srt(script, audio_duration, srt_path, start_offset=start_silence)
                         
                         if not srt_success:
                             st.error("❌ 字幕生成失败")
