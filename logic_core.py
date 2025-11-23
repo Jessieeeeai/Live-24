@@ -356,6 +356,7 @@ class CryptoBrain:
         print("🔍 Step 7: 质量审核...")
         
         issues = []
+        char_count = len(draft)
         
         # 1. 语义重复检查（简单版）
         sentences = re.split(r'[。！？]', draft)
@@ -363,11 +364,16 @@ class CryptoBrain:
         if len(sentences) - len(unique_sentences) > 3:
             issues.append("检测到较多重复句子")
         
-        # 2. 字数检查
-        if len(draft) < 300:
-            issues.append("内容过短")
-        elif len(draft) > 1000:
-            issues.append("内容过长")
+        # 2. 字数检查（更严格的标准）
+        print(f"📊 当前字数: {char_count} 字")
+        if char_count < 800:
+            issues.append(f"内容过短（{char_count}字），目标至少1500字")
+        elif char_count >= 800 and char_count < 1200:
+            print(f"⚠️ 字数偏少（{char_count}字），理想值1500-2500字")
+        elif char_count > 3500:
+            issues.append(f"内容过长（{char_count}字），建议控制在2500字以内")
+        else:
+            print(f"✅ 字数合格（{char_count}字）")
         
         # 3. 检查是否有实质内容
         if "分析" not in draft and "影响" not in draft and "原因" not in draft:
@@ -491,6 +497,8 @@ class CryptoBrain:
    - 不能只复述新闻，必须有独到见解
    - 挖掘背后的深层原因和影响
    - 提出有价值的预测或建议
+   - 每个分析点至少展开3-5句话，不要一笔带过
+   - 用具体案例和数据支撑你的观点
 
 3. **口语化表达**：
    - 句子要短，平均15字以内
@@ -499,9 +507,10 @@ class CryptoBrain:
    - 带点幽默和个性
 
 4. **内容控制**：
-   - 字数：600-800字
+   - 字数：1500-2500字（目标8-15分钟播报时长）
    - 节奏：有快有慢，有重点有展开
    - 结构：清晰的开头、中间、结尾
+   - 深度：充分展开每个分析点，不要简略概括
 
 5. **严禁事项**：
    - 不要输出"我选择了XX框架"等元语言
@@ -516,26 +525,62 @@ class CryptoBrain:
    - 知性但不高冷
    - 有观点有态度
 
+⚠️ **重要提醒**：
+- 目标字数：1500-2500字（约8-15分钟播报时长）
+- 如果字数不足1500字，将被退回重写
+- 充分展开分析，不要简略概括
+- 每个论点都要有足够的论证支撑
+
 现在开始创作，直接输出文案正文：
 """
         
         try:
-            raw_script = self.llm.invoke(prompt).content
-            clean_script = self._clean_text(raw_script)
+            # 🔥 多次尝试机制：确保生成高质量长内容
+            max_attempts = 3
+            best_script = None
+            best_char_count = 0
             
-            # Step 7: 质量审核
-            passed, issues = self._quality_check(clean_script)
+            for attempt in range(max_attempts):
+                print(f"🎨 第 {attempt + 1} 次生成..." if attempt > 0 else "🎨 开始生成内容...")
+                
+                # 根据尝试次数调整 prompt
+                if attempt == 0:
+                    current_prompt = prompt
+                elif attempt == 1:
+                    current_prompt = prompt.replace(
+                        "现在开始创作，直接输出文案正文：",
+                        "⚠️ 注意：上一次生成字数不足！请务必生成1500-2500字的深度分析。\n现在开始创作，直接输出文案正文："
+                    )
+                else:
+                    current_prompt = prompt.replace(
+                        "现在开始创作，直接输出文案正文：",
+                        "🔴 严重警告：这是最后一次机会！必须生成至少1500字！\n每个分析点都要充分展开，不要简略概括！\n现在开始创作，直接输出文案正文："
+                    )
+                
+                raw_script = self.llm.invoke(current_prompt).content
+                clean_script = self._clean_text(raw_script)
+                
+                # 记录最佳结果
+                if len(clean_script) > best_char_count:
+                    best_script = clean_script
+                    best_char_count = len(clean_script)
+                
+                # Step 7: 质量审核
+                passed, issues = self._quality_check(clean_script)
+                
+                if passed:
+                    print(f"✅ 文案生成完成，共 {len(clean_script)} 字")
+                    print("="*50 + "\n")
+                    return clean_script, None, False
+                else:
+                    print(f"❌ 第 {attempt + 1} 次生成未通过审核: {', '.join(issues)}")
+                    if attempt < max_attempts - 1:
+                        print(f"🔄 将进行第 {attempt + 2} 次尝试...")
             
-            if not passed:
-                print(f"⚠️ 初稿存在问题，进行优化...")
-                # 简单优化：如果太短就用原始版本
-                if len(clean_script) < 300:
-                    clean_script = raw_script
-            
-            print(f"✅ 文案生成完成，共 {len(clean_script)} 字")
+            # 如果所有尝试都失败，返回最佳结果
+            print(f"⚠️ {max_attempts} 次尝试后，使用最佳结果（{best_char_count}字）")
             print("="*50 + "\n")
-            
-            return clean_script, None, False
+            return best_script if best_script else clean_script, None, False
             
         except Exception as e:
             print(f"❌ 生成失败: {e}")
