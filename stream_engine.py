@@ -6,13 +6,25 @@ import json
 # 确保临时文件夹存在
 os.makedirs("temp", exist_ok=True)
 
-async def text_to_speech(text, output_file="temp/output.mp3"):
+async def text_to_speech(text, output_file="temp/output.mp3", voice="zh-CN-XiaoyiNeural"):
     """
-    TTS生成：强制使用最自然的 '晓晓' 音色
+    TTS生成：优化语音自然度
+    推荐音色：
+    - zh-CN-XiaoyiNeural: 最自然，适合播报（推荐）
+    - zh-CN-XiaoxiaoNeural: 情感丰富，但较快
+    - zh-CN-XiaohanNeural: 温柔自然
+    - zh-CN-YunxiNeural: 男声，沉稳
     """
-    # zh-CN-XiaoxiaoNeural 是目前 EdgeTTS 中情感最丰富的中文女声
-    communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural") 
+    # 使用晓依（Xiaoyi）- 更自然的播报风格
+    # 添加语速和音调控制，让声音更自然
+    communicate = edge_tts.Communicate(
+        text, 
+        voice,
+        rate="-10%",  # 降低10%语速，更从容
+        pitch="+0Hz"   # 保持原音调
+    )
     await communicate.save(output_file)
+    print(f"✅ 语音生成完成，音色: {voice}")
     return output_file
 
 def get_audio_duration(audio_path):

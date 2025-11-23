@@ -27,10 +27,11 @@ def save_db(topics):
         json.dump(topics, f, ensure_ascii=False)
 
 # --- 🔥 优化的字幕生成算法 (核心修复点) ---
-def generate_srt(text, audio_duration, output_path):
+def generate_srt(text, audio_duration, output_path, delay_offset=0.3):
     """
     将长文案切分为 SRT 字幕
     🔥 核心修复：基于实际音频时长，而非估算语速
+    🔥 新增：延迟补偿，解决字幕提前显示问题
     """
     # 预处理：移除换行，变成一长串
     full_text = text.replace("\n", " ").replace("  ", " ").strip()
@@ -45,14 +46,14 @@ def generate_srt(text, audio_duration, output_path):
     actual_speed = total_chars / audio_duration  # 真实的字/秒
     print(f"📊 字幕同步参数: 总字数={total_chars}, 音频时长={audio_duration:.2f}s, 实际语速={actual_speed:.2f}字/秒")
     
-    # 切分策略：每行最多 12 字，或遇到标点就断句
+    # 切分策略：每行最多 15 字，或遇到标点就断句
     segments = []
     current_seg = ""
     
     for char in full_text:
         current_seg += char
-        # 切分条件：长度满12，或遇到标点
-        if len(current_seg) >= 12 or char in ["，", "。", "！", "？", "；", ",", ".", "!", "?", ";", " "]:
+        # 切分条件：长度满15，或遇到标点
+        if len(current_seg) >= 15 or char in ["，", "。", "！", "？", "；", ",", ".", "!", "?", ";", " "]:
             if current_seg.strip():
                 segments.append(current_seg.strip())
             current_seg = ""
@@ -69,16 +70,16 @@ def generate_srt(text, audio_duration, output_path):
     
     # 写入 SRT 文件
     with open(output_path, "w", encoding="utf-8") as f:
-        start_time = 0.0
+        start_time = delay_offset  # 🔥 添加初始延迟，让字幕稍微滞后
         for i, seg in enumerate(segments):
             # 按字数占比分配时间
             seg_char_ratio = len(seg) / total_seg_chars
             duration = audio_duration * seg_char_ratio
             
-            # 🔥 确保最短显示时间不少于 1.5 秒（防止闪烁）
+            # 🔥 确保最短显示时间不少于 2.0 秒（增加到2秒，更稳定）
             # 但不能超过实际剩余时间
-            remaining_time = audio_duration - start_time
-            duration = max(1.5, min(duration, remaining_time / (len(segments) - i)))
+            remaining_time = audio_duration - start_time + delay_offset
+            duration = max(2.0, min(duration, remaining_time / (len(segments) - i)))
             
             end_time = start_time + duration
             
@@ -91,7 +92,7 @@ def generate_srt(text, audio_duration, output_path):
             f.write(f"{i+1}\n{fmt(start_time)} --> {fmt(end_time)}\n{seg}\n\n")
             start_time = end_time
     
-    print(f"✅ 字幕生成完成: {len(segments)} 行，总时长 {audio_duration:.2f}s")
+    print(f"✅ 字幕生成完成: {len(segments)} 行，总时长 {audio_duration:.2f}s，延迟补偿 {delay_offset}s")
     return True
 
 # --- UI 界面构建 ---
@@ -116,6 +117,21 @@ with st.sidebar:
     interval = st.slider("轮播间隔 (秒)", 30, 600, 120, help="播完一条休息多久")
     allow_replay = st.checkbox("允许插播老视频 (防冷场)", value=True)
     old_video_chance = st.slider("老视频插播概率 (%)", 0, 100, 30, help="无新闻时播放历史视频的概率")
+    
+    st.header("🎤 语音设置")
+    voice_option = st.selectbox(
+        "选择播报音色",
+        [
+            ("晓依 (推荐-自然播报)", "zh-CN-XiaoyiNeural"),
+            ("晓晓 (情感丰富)", "zh-CN-XiaoxiaoNeural"),
+            ("晓涵 (温柔自然)", "zh-CN-XiaohanNeural"),
+            ("晓萱 (成熟知性)", "zh-CN-XiaoxuanNeural"),
+            ("云希 (男声-沉稳)", "zh-CN-YunxiNeural")
+        ],
+        format_func=lambda x: x[0],
+        help="选择不同的语音风格，晓依最接近真人播报"
+    )
+    selected_voice = voice_option[1]
     
     st.divider()
     bg_file = st.file_uploader("📺 直播背景 (MP4)", type=['mp4'])
@@ -239,8 +255,8 @@ with tab1:
                         audio_path = f"temp/s_{ts}.mp3"
                         srt_path = f"temp/s_{ts}.srt"
                         
-                        # 生成语音
-                        asyncio.run(text_to_speech(script, audio_path))
+                        # 生成语音（使用用户选择的音色）
+                        asyncio.run(text_to_speech(script, audio_path, voice=selected_voice))
                         
                         # 🔥 获取音频真实时长
                         audio_duration = get_audio_duration(audio_path)
@@ -248,6 +264,8 @@ with tab1:
                             # 备用方案：按 3.2 字/秒估算
                             audio_duration = len(script) / 3.2
                             st.warning(f"⚠️ 使用估算时长: {audio_duration:.2f}s")
+                        else:
+                            st.info(f"⏱️ 音频时长: {audio_duration:.2f} 秒 ({int(audio_duration//60)}分{int(audio_duration%60)}秒)")
                         
                         # 🔥 基于真实时长生成字幕
                         st.write("🔥 生成同步字幕...")
@@ -301,10 +319,18 @@ with tab1:
                         st.error(f"❌ 错误: {err}")
                         error_count += 1
                     
-                    # D. 休息逻辑 (仅直播模式)
+                    # D. 智能休息逻辑 (仅直播模式)
                     if is_live:
-                        st.info(f"⏳ 本条结束，休息 {interval} 秒后继续下一轮...")
-                        time.sleep(interval)
+                        # 如果有音频时长，在结束前30秒开始准备下一条
+                        if 'audio_duration' in locals() and audio_duration:
+                            # 计算实际等待时间：音频时长 - 30秒（提前准备）
+                            wait_time = max(10, audio_duration - 30)
+                            st.info(f"⏳ 当前内容时长 {audio_duration:.0f}秒，将在播放结束前30秒开始准备下一条...")
+                            st.info(f"⏳ 等待 {wait_time:.0f} 秒后开始下一轮...")
+                            time.sleep(wait_time)
+                        else:
+                            st.info(f"⏳ 本条结束，休息 {interval} 秒后继续下一轮...")
+                            time.sleep(interval)
                         # 🔥 继续循环，不退出
                         continue
                     else:
