@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+
+# 临时文件
+temp/
+*.mp3
+*.srt
+*.mp4
+
+# 配置和密钥
+.env
+*.key
+secrets.toml
+
+# 数据库
+*.json
+!requirements.txt
+
+# 日志
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 用户上传内容（可选择性保留）
+assets/background.mp4
+archive_videos/
