@@ -478,7 +478,7 @@ class CryptoBrain:
 来源：{url}
 
 【支撑证据】
-{chr(10).join([f"- {e['title']}" for e in organized_content['支撑证据']])}
+{chr(10).join([f"- {e['标题']}" for e in organized_content['支撑证据']])}
 
 【创作要求 - 严格执行】
 
