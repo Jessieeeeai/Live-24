@@ -91,7 +91,10 @@ class CryptoBrain:
         评分维度：新鲜度(30%) + 争议性(25%) + 受众覆盖(20%) + 传播速度(15%) + 情绪强度(10%)
         """
         score = 0
-        content = (news_item.get('title', '') + ' ' + news_item.get('content', '')).lower()
+        # 🔥 FIX: 兼容 Tavily API 的不同字段名 (title/name, content/snippet)
+        title = news_item.get('title') or news_item.get('name') or ''
+        content_text = news_item.get('content') or news_item.get('snippet') or news_item.get('description') or ''
+        content = (title + ' ' + content_text).lower()
         
         # 1. 新鲜度 (30分) - 基于发布时间
         published_at = news_item.get('published_date', '')
@@ -135,7 +138,10 @@ class CryptoBrain:
         🔥 Step 3-4: 智能框架匹配
         根据新闻类型自动选择最佳分析框架
         """
-        content = (news_item.get('title', '') + ' ' + news_item.get('content', '')).lower()
+        # 🔥 FIX: 兼容不同字段名
+        title = news_item.get('title') or news_item.get('name') or ''
+        content_text = news_item.get('content') or news_item.get('snippet') or news_item.get('description') or ''
+        content = (title + ' ' + content_text).lower()
         
         # 关键词 → 框架映射
         framework_keywords = {
@@ -172,9 +178,12 @@ class CryptoBrain:
         """
         print("📚 Step 5: 收集和筛选证据...")
         
+        # 🔥 FIX: 兼容不同字段名
+        title = news_item.get('title') or news_item.get('name') or ''
+        
         # 1. 广泛收集（正反面）
         try:
-            search_query = f"{topic} {news_item.get('title', '')}"
+            search_query = f"{topic} {title}"
             evidence_pool = self.tavily.search(
                 query=search_query,
                 search_depth="advanced",
@@ -182,7 +191,8 @@ class CryptoBrain:
                 days=3  # 扩大到3天，确保足够证据
             )
             raw_evidence = evidence_pool.get("results", [])
-        except:
+        except Exception as e:
+            print(f"⚠️ 证据收集失败: {e}")
             raw_evidence = [news_item]  # 失败时至少用原新闻
         
         # 2. 时效性检查（删除过时信息）
@@ -218,20 +228,25 @@ class CryptoBrain:
         
         framework_info = self.frameworks.get(framework, self.frameworks["5W1H"])
         
+        # 🔥 FIX: 兼容不同字段名
+        title = news_item.get('title') or news_item.get('name') or ''
+        content_text = news_item.get('content') or news_item.get('snippet') or news_item.get('description') or ''
+        url = news_item.get('url') or ''
+        
         # 构建结构化的素材包
         organized = {
             "框架名称": framework_info["name"],
             "结构": framework_info["structure"],
             "主新闻": {
-                "标题": news_item.get('title', ''),
-                "内容": news_item.get('content', ''),
-                "来源": news_item.get('url', '')
+                "标题": title,
+                "内容": content_text,
+                "来源": url
             },
             "支撑证据": [
                 {
-                    "标题": e.get('title', ''),
-                    "摘要": e.get('content', '')[:200],
-                    "来源": e.get('url', '')
+                    "标题": e.get('title') or e.get('name') or '',
+                    "摘要": (e.get('content') or e.get('snippet') or e.get('description') or '')[:200],
+                    "来源": e.get('url') or ''
                 }
                 for e in evidence[:3]  # 最多3条支撑
             ]
@@ -243,6 +258,10 @@ class CryptoBrain:
         """
         去重机制：避免短时间内重复讲同一个新闻
         """
+        # 🔥 FIX: 处理空标题情况
+        if not new_topic or new_topic.strip() == '':
+            print("⚠️ 标题为空，跳过去重检查")
+            return False
         try:
             if not os.path.exists(HISTORY_FILE):
                 with open(HISTORY_FILE, "w") as f:
@@ -406,11 +425,17 @@ class CryptoBrain:
         selected_framework = None
         
         for score, item in scored_results:
-            if not self._check_duplication(item['title']):
+            # 🔥 FIX: 兼容不同字段名
+            title = item.get('title') or item.get('name') or ''
+            if not title:
+                print("⚠️ 发现无标题新闻，跳过")
+                continue
+                
+            if not self._check_duplication(title):
                 selected_news = item
                 # Step 3-4: 智能框架匹配
                 selected_framework = self._match_framework(item)
-                print(f"✅ 选中头条: {item['title'][:50]}...")
+                print(f"✅ 选中头条: {title[:50]}...")
                 print(f"🎯 Step 3-4: 匹配框架 → {selected_framework} ({self.frameworks[selected_framework]['name']})")
                 break
         
@@ -433,6 +458,11 @@ class CryptoBrain:
         
         framework_info = self.frameworks[selected_framework]
         
+        # 🔥 FIX: 兼容不同字段名
+        title = selected_news.get('title') or selected_news.get('name') or ''
+        content_text = selected_news.get('content') or selected_news.get('snippet') or selected_news.get('description') or ''
+        url = selected_news.get('url') or ''
+        
         # 🔥 核心 Prompt - 10步专业流程版
         prompt = f"""
 {self.persona}
@@ -443,9 +473,9 @@ class CryptoBrain:
 框架结构: {framework_info['structure']}
 
 【原始新闻】
-标题：{selected_news['title']}
-内容：{selected_news['content']}
-来源：{selected_news['url']}
+标题：{title}
+内容：{content_text}
+来源：{url}
 
 【支撑证据】
 {chr(10).join([f"- {e['title']}" for e in organized_content['支撑证据']])}

@@ -158,7 +158,7 @@ tab1, tab2 = st.tabs(["📡 运行监视器", "📚 备用话题管理 (CMS)"])
 with tab2:
     st.subheader("当搜不到 24H 新闻时，随机聊以下话题：")
     curr_topics = load_db()
-    edited = st.data_editor([{"topic": t} for t in curr_topics], num_rows="dynamic", use_container_width=True)
+    edited = st.data_editor([{"topic": t} for t in curr_topics], num_rows="dynamic", width="stretch")
     if st.button("💾 保存话题库"):
         save_db([r["topic"] for r in edited if r["topic"]])
         st.success("知识库已更新！")
@@ -171,7 +171,7 @@ with tab1:
     with col2: 
         log_box = st.empty() # 日志区
         status_box = st.empty() # 状态区
-        start_btn = st.button("🚀 启动系统", type="primary", use_container_width=True)
+        start_btn = st.button("🚀 启动系统", type="primary", width="stretch")
 
     if start_btn:
         # 1. 基础环境检查
@@ -365,7 +365,21 @@ with tab1:
                 break
             
             except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
                 st.error(f"💥 发生意外错误: {e}")
+                with st.expander("🔍 查看详细错误信息"):
+                    st.code(error_details, language="python")
+                
+                # 🔥 常见错误提示
+                error_str = str(e)
+                if "'title'" in error_str or "'name'" in error_str:
+                    st.warning("💡 提示：可能是新闻数据格式问题，已自动尝试兼容处理")
+                elif "tavily" in error_str.lower():
+                    st.warning("💡 提示：Tavily API 可能出现问题，请检查网络连接或API密钥")
+                elif "deepseek" in error_str.lower():
+                    st.warning("💡 提示：DeepSeek API 可能出现问题，请检查API密钥或余额")
+                
                 error_count += 1
                 if is_live:
                     st.warning("🔄 系统将在 10 秒后尝试重启下一轮...")
